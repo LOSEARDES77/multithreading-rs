@@ -1,12 +1,14 @@
 [package]
 name = "multithreading"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A simple multithreading library in Rust"
 authors = ["LOSEARDES77"]
 license = "MIT"
 repository = "https://github.com/LOSEARDES77/multithreading-rs"
+readme = "README.md"
+keywords = ["thread", "multithread", "cpus", "cpu", "process"]
+categories = ["concurrency"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
