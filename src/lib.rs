@@ -8,14 +8,16 @@ pub struct ThreadPool {
 }
 
 enum Message {
-    NewJob(Job),
+    NewJob(Job, mpsc::Sender<u8>),
     Terminate,
 }
 
 impl ThreadPool {
-
     pub fn new(size: usize) -> ThreadPool {
-        assert!(size > 0);
+        let mut size = size;
+        if size == 0 {
+            size = num_cpus::get();
+        }
 
         let (sender, receiver) = mpsc::channel();
         let receiver = Arc::new(Mutex::new(receiver));
@@ -23,11 +25,18 @@ impl ThreadPool {
         for id in 0..size {
             workers.push(Worker::new(id, Arc::clone(&receiver), false));
         }
-        ThreadPool { workers, sender, debug: false }
+        ThreadPool {
+            workers,
+            sender,
+            debug: false,
+        }
     }
 
     pub fn new_with_debug(size: usize) -> ThreadPool {
-        assert!(size > 0);
+        let mut size = size;
+        if size == 0 {
+            size = num_cpus::get();
+        }
 
         let (sender, receiver) = mpsc::channel();
         let receiver = Arc::new(Mutex::new(receiver));
@@ -35,16 +44,24 @@ impl ThreadPool {
         for id in 0..size {
             workers.push(Worker::new(id, Arc::clone(&receiver), true));
         }
-        ThreadPool { workers, sender, debug: true }
-    }
-    pub fn execute<F>(&self, f: F)
-        where
-            F: FnOnce() + Send + 'static,
-    {
-        let job = Box::new(f);
-        self.sender.send(Message::NewJob(job)).unwrap();
+        ThreadPool {
+            workers,
+            sender,
+            debug: true,
+        }
     }
 
+    pub fn execute<F>(&self, f: F) -> mpsc::Receiver<u8>
+        where
+            F: FnOnce() -> u8 + Send + 'static,
+    {
+        let (tx, rx) = mpsc::channel();
+        let job = Box::new(f);
+        self.sender
+            .send(Message::NewJob(job, tx))
+            .expect("Failed to send job to thread pool");
+        rx
+    }
 }
 
 impl Drop for ThreadPool {
@@ -68,26 +85,24 @@ impl Drop for ThreadPool {
         }
     }
 }
+
 struct Worker {
     id: usize,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>, debug: bool) -> Worker {
+    fn new(
+        id: usize,
+        receiver: Arc<Mutex<mpsc::Receiver<Message>>>,
+        debug: bool,
+    ) -> Worker {
         let thread = thread::spawn(move || loop {
             let message = receiver.lock().unwrap().recv().unwrap();
             match message {
-                Message::NewJob(job) => {
-                    let start = std::time::Instant::now();
-                    if debug {
-                        println!("Worker {} got a job; executing.", id);
-                    }
-                    job();
-                    let duration = start.elapsed();
-                    if debug {
-                        println!("Worker {} finished the job in {}ms.", id, duration.as_millis());
-                    }
+                Message::NewJob(job, tx) => {
+                    let result = job();
+                    tx.send(result).expect("Failed to send result back to main thread");
                 }
                 Message::Terminate => {
                     if debug {
@@ -97,11 +112,14 @@ impl Worker {
                 }
             }
         });
-        Worker { id, thread: Some(thread) }
+        Worker {
+            id,
+            thread: Some(thread),
+        }
     }
 }
 
-type Job = Box<dyn FnOnce() + Send + 'static>;
+type Job = Box<dyn FnOnce() -> u8 + Send + 'static>;
 
 #[cfg(test)]
 mod tests {
@@ -109,15 +127,15 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let pool = ThreadPool::new(4);
-        let result:u8 = 0;
-        let a:u8 = 1;
-        let b:u8 = 3;
-        pool.execute(move || {
-            let result = &a + &b;
-            assert_eq!(result, 4);
+        let pool = ThreadPool::new(0);
+        let a: u8 = 1;
+        let b: u8 = 3;
+        let receiver = pool.execute(move || {
+            a + b
         });
 
-        assert_eq!(result, 0);
+        let result = receiver.recv().unwrap();
+        assert_eq!(result, 4);
     }
+
 }
