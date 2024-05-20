@@ -1,34 +1,19 @@
-use std::marker::PhantomData;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, mpsc, Mutex};
 use std::thread;
 
-pub struct ThreadPool<T> {
-    workers: Vec<Worker<T>>,
-    sender: mpsc::Sender<Message<T>>,
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Message>,
     debug: bool,
 }
 
-pub trait FnPool<T> {
-    fn call(self) -> T;
-}
-
-impl<F, T> FnPool<T> for F
-    where
-        F: FnOnce() -> T + Send + 'static,
-        T: Send + 'static,
-{
-    fn call(self) -> T {
-        self()
-    }
-}
-
-enum Message<T> {
-    NewJob(Job<T>, mpsc::Sender<T>),
+enum Message {
+    NewJob(Job, mpsc::Sender<u8>),
     Terminate,
 }
 
-impl<T: Send + 'static> ThreadPool<T> {
-    pub fn new(size: usize) -> ThreadPool<T> {
+impl ThreadPool {
+    pub fn new(size: usize) -> ThreadPool {
         let mut size = size;
         if size == 0 {
             size = num_cpus::get();
@@ -36,7 +21,7 @@ impl<T: Send + 'static> ThreadPool<T> {
 
         let (sender, receiver) = mpsc::channel();
         let receiver = Arc::new(Mutex::new(receiver));
-        let mut workers: Vec<Worker<T>> = Vec::with_capacity(size);
+        let mut workers = Vec::with_capacity(size);
         for id in 0..size {
             workers.push(Worker::new(id, Arc::clone(&receiver), false));
         }
@@ -47,7 +32,7 @@ impl<T: Send + 'static> ThreadPool<T> {
         }
     }
 
-    pub fn new_with_debug(size: usize) -> ThreadPool<T> {
+    pub fn new_with_debug(size: usize) -> ThreadPool {
         let mut size = size;
         if size == 0 {
             size = num_cpus::get();
@@ -55,7 +40,7 @@ impl<T: Send + 'static> ThreadPool<T> {
 
         let (sender, receiver) = mpsc::channel();
         let receiver = Arc::new(Mutex::new(receiver));
-        let mut workers: Vec<Worker<T>> = Vec::with_capacity(size);
+        let mut workers = Vec::with_capacity(size);
         for id in 0..size {
             workers.push(Worker::new(id, Arc::clone(&receiver), true));
         }
@@ -66,10 +51,9 @@ impl<T: Send + 'static> ThreadPool<T> {
         }
     }
 
-    pub fn execute<F>(&self, f: F) -> mpsc::Receiver<T>
+    pub fn execute<F>(&self, f: F) -> mpsc::Receiver<u8>
         where
-            F: FnOnce() -> T + Send + 'static,
-            T: Send + 'static,
+            F: FnOnce() -> u8 + Send + 'static,
     {
         let (tx, rx) = mpsc::channel();
         let job = Box::new(f);
@@ -80,7 +64,7 @@ impl<T: Send + 'static> ThreadPool<T> {
     }
 }
 
-impl<T> Drop for ThreadPool<T> {
+impl Drop for ThreadPool {
     fn drop(&mut self) {
         if self.debug {
             println!("Sending terminate message to all workers.");
@@ -102,24 +86,23 @@ impl<T> Drop for ThreadPool<T> {
     }
 }
 
-type Job<T> = Box<dyn FnOnce() -> T + Send + 'static>;
-
-#[warn(dead_code)]
-struct Worker<T> {
+struct Worker {
     id: usize,
     thread: Option<thread::JoinHandle<()>>,
-    return_type: PhantomData<T>,
 }
 
-impl<T: Send + 'static> Worker<T> {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message<T>>>>, debug: bool) -> Worker<T> {
+impl Worker {
+    fn new(
+        id: usize,
+        receiver: Arc<Mutex<mpsc::Receiver<Message>>>,
+        debug: bool,
+    ) -> Worker {
         let thread = thread::spawn(move || loop {
             let message = receiver.lock().unwrap().recv().unwrap();
             match message {
                 Message::NewJob(job, tx) => {
                     let result = job();
-                    tx.send(result)
-                        .expect("Failed to send result back to main thread");
+                    tx.send(result).expect("Failed to send result back to main thread");
                 }
                 Message::Terminate => {
                     if debug {
@@ -132,21 +115,22 @@ impl<T: Send + 'static> Worker<T> {
         Worker {
             id,
             thread: Some(thread),
-            return_type: PhantomData,
         }
     }
 }
+
+type Job = Box<dyn FnOnce() -> u8 + Send + 'static>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_integer() {
+    fn it_works() {
         let pool = ThreadPool::new(0);
         let a: u8 = 1;
         let b: u8 = 3;
-        let receiver = pool.execute(move ||{
+        let receiver = pool.execute(move || {
             a + b
         });
 
@@ -154,46 +138,4 @@ mod tests {
         assert_eq!(result, 4);
     }
 
-    #[test]
-    fn test_string() {
-        let pool = ThreadPool::new(0);
-        let a = String::from("Hello");
-        let b = String::from("World");
-        let receiver = pool.execute(move ||{
-            a + " " + &b
-        });
-
-        let result = receiver.recv().unwrap();
-        assert_eq!(result, "Hello World");
-    }
-
-    #[test]
-    fn test_struct() {
-        struct Test {
-            a: u8,
-            b: u8,
-        }
-
-        let pool = ThreadPool::new(0);
-        let a = Test { a: 123, b: 86 };
-        let receiver = pool.execute(move ||{
-            a.a + a.b
-        });
-
-        let result = receiver.recv().unwrap();
-        assert_eq!(result, 209);
-    }
-
-    #[test]
-    fn test_closure() {
-        let pool = ThreadPool::new(0);
-        let a: u8 = 1;
-        let b: u8 = 3;
-        let receiver = pool.execute(||{
-            a + b
-        });
-
-        let result = receiver.recv().unwrap();
-        assert_eq!(result, 4);
-    }
 }
