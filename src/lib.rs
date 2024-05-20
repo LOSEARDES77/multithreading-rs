@@ -8,6 +8,20 @@ pub struct ThreadPool<T> {
     debug: bool,
 }
 
+pub trait FnPool<T> {
+    fn call(self) -> T;
+}
+
+impl<F, T> FnPool<T> for F
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+{
+    fn call(self) -> T {
+        self()
+    }
+}
+
 enum Message<T> {
     NewJob(Job<T>, mpsc::Sender<T>),
     Terminate,
@@ -90,6 +104,7 @@ impl<T> Drop for ThreadPool<T> {
 
 type Job<T> = Box<dyn FnOnce() -> T + Send + 'static>;
 
+#[warn(dead_code)]
 struct Worker<T> {
     id: usize,
     thread: Option<thread::JoinHandle<()>>,
@@ -174,7 +189,7 @@ mod tests {
         let pool = ThreadPool::new(0);
         let a: u8 = 1;
         let b: u8 = 3;
-        let receiver = pool.execute(move ||{
+        let receiver = pool.execute(||{
             a + b
         });
 
