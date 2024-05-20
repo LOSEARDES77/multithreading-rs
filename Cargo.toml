@@ -1,6 +1,6 @@
 [package]
 name = "multithreading"
-version = "0.1.2"
+version = "0.1.1"
 edition = "2021"
 description = "A simple multithreading library in Rust"
 authors = ["LOSEARDES77"]
@@ -12,4 +12,3 @@ categories = ["concurrency"]
 
 
 [dependencies]
-num_cpus = "1.16.0"
